@@ -204,6 +204,7 @@ enum ProcessingMode
 {
 	PROCESS_NORMAL,  ///< Normal
 	PROCESS_ATLAS,   ///< Atlas
+	PROCESS_GRID,    ///< Grid
 	PROCESS_CUBEMAP, ///< Cubemap
 	PROCESS_SKYBOX,  ///< Skybox
 };
@@ -298,10 +299,13 @@ std::vector<Magick::Image> load_image (Magick::Image &img)
 	double height = img.rows ();
 
 	// get sub-image size for cubemap/skybox
-	if (process_mode == PROCESS_CUBEMAP || process_mode == PROCESS_SKYBOX)
+	if (process_mode == PROCESS_CUBEMAP || process_mode == PROCESS_SKYBOX || process_mode == PROCESS_GRID)
 	{
-		width /= 4.0;
-		height /= 3.0;
+		if (process_mode == PROCESS_CUBEMAP || process_mode == PROCESS_SKYBOX)
+		{
+			width /= 4.0;
+			height /= 3.0;
+		}
 
 		// check that sub-image width is integral
 		if (width != static_cast<size_t> (width))
@@ -315,6 +319,10 @@ std::vector<Magick::Image> load_image (Magick::Image &img)
 		switch (static_cast<size_t> (width))
 		{
 		case 8:
+			if (process_mode == PROCESS_GRID)
+				throw std::runtime_error ("Invalid width");
+			break;
+
 		case 16:
 		case 32:
 		case 64:
@@ -332,6 +340,10 @@ std::vector<Magick::Image> load_image (Magick::Image &img)
 		switch (static_cast<size_t> (height))
 		{
 		case 8:
+			if (process_mode == PROCESS_GRID)
+				throw std::runtime_error ("Invalid height");
+			break;
+
 		case 16:
 		case 32:
 		case 64:
@@ -356,14 +368,20 @@ std::vector<Magick::Image> load_image (Magick::Image &img)
 			throw std::runtime_error ("Invalid height");
 	}
 
+	//TODO: Support border/edge for grid mode
+	if (process_mode == PROCESS_GRID && (border != 0 || edge != 0) )
+	{
+		throw std::runtime_error ("TODO: Support border/edge for grid mode");
+	}
+
 	// Set page offsets to 0
 	img.page (Magick::Geometry (img.columns (), img.rows ()));
 
 	std::vector<Magick::Image> result;
-	if (process_mode == PROCESS_NORMAL || process_mode == PROCESS_ATLAS)
+	if (process_mode == PROCESS_NORMAL || process_mode == PROCESS_ATLAS || process_mode == PROCESS_GRID)
 	{
 		// apply border/edge
-		if (process_mode == PROCESS_NORMAL)
+		if (process_mode == PROCESS_NORMAL || process_mode == PROCESS_GRID)
 		{
 			output_width  = potCeil (img.columns () + 2 * border);
 			output_height = potCeil (img.rows () + 2 * border);
@@ -391,12 +409,68 @@ std::vector<Magick::Image> load_image (Magick::Image &img)
 		{
 			assert (subimage_data.empty ());
 			subimage_data.emplace_back (0,
-			    "",
-			    static_cast<float> (border + edge) / output_width,
-			    1.0f - static_cast<float> (border + edge) / output_height,
-			    static_cast<float> (border + image_width - edge) / output_width,
-			    1.0f - static_cast<float> (border + image_height - edge) / output_height,
-			    false);
+				"",
+				static_cast<float> (border + edge) / output_width,
+				1.0f - static_cast<float> (border + edge) / output_height,
+				static_cast<float> (border + image_width - edge) / output_width,
+				1.0f - static_cast<float> (border + image_height - edge) / output_height,
+				false);
+		}
+		else if (process_mode == PROCESS_GRID)
+		{
+			#define TILE_SIZE (16.0)
+
+			assert (subimage_data.empty ());
+
+			float block_width_percent  = 1.0 / (image_width  / TILE_SIZE);
+			float block_height_percent = 1.0 / (image_height / TILE_SIZE);
+
+			float tiles_per_half = image_width / TILE_SIZE / 2.0;
+
+			size_t counter = 0;
+
+			// put two dummy entries
+			subimage_data.emplace_back (counter++,
+				"",
+				block_width_percent  * 0,
+				block_height_percent * 0,
+				block_width_percent  * (0+1),
+				block_height_percent * (0+1),
+				false);
+
+			subimage_data.emplace_back (counter++,
+				"",
+				block_width_percent  * 0,
+				block_height_percent * 0,
+				block_width_percent  * (0+1),
+				block_height_percent * (0+1),
+				false);
+
+			// output a subimage for each 16x16 tile
+			for (float y = 0; y < image_height / TILE_SIZE; y++)
+			{
+				for (float x = 0; x < tiles_per_half; x++)
+				{
+					// assume the texture image uses the different halves of the image to represent versions of tiles
+					// for the left and the right eye at corresponding positions. interleave the subimage entries so
+					// that you can +1 to get the right from the left
+					subimage_data.emplace_back (counter++,
+						"",
+						block_width_percent * x,
+						1.0f - block_height_percent * y,
+						block_width_percent * (x+1),
+						1.0f - block_height_percent * (y+1),
+						false);
+
+					subimage_data.emplace_back (counter++,
+						"",
+						block_width_percent * (x + tiles_per_half),
+						1.0f - block_height_percent * y,
+						block_width_percent * (x + tiles_per_half + 1),
+						1.0f - block_height_percent * (y+1),
+						false);
+				}
+			}
 		}
 
 		// push the source image
@@ -1340,6 +1414,7 @@ const struct option long_options[] = {
 	{ "cubemap",  no_argument,       nullptr, 'c', },
 	{ "depends",  required_argument, nullptr, 'd', },
 	{ "format",   required_argument, nullptr, 'f', },
+	{ "grid",     no_argument,       nullptr, 'g', },
 	{ "header",   required_argument, nullptr, 'H', },
 	{ "help",     no_argument,       nullptr, 'h', },
 	{ "include",  required_argument, nullptr, 'i', },
@@ -1530,6 +1605,11 @@ ParseStatus parseOptions (std::vector<char *> &args)
 			break;
 		}
 
+		case 'g':
+			// grid
+			process_mode = PROCESS_GRID;
+			break;
+
 		case 'H':
 			// set header path option
 			header_path = getPath (optarg);
@@ -1672,7 +1752,7 @@ ParseStatus parseOptions (std::vector<char *> &args)
 
 	assert (optind >= 0);
 
-	if ((border || edge) && process_mode != PROCESS_ATLAS && process_mode != PROCESS_NORMAL)
+	if ((border || edge) && process_mode != PROCESS_ATLAS && process_mode != PROCESS_NORMAL && process_mode != PROCESS_GRID)
 	{
 		const char *mode = process_mode == PROCESS_CUBEMAP ? "cubemaps" : "skyboxes";
 		std::fprintf(stderr, "--border cannot be applied to %s", mode);

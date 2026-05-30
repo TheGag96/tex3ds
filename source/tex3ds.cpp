@@ -279,7 +279,7 @@ std::vector<Magick::Image> load_image (Magick::Image &img)
 {
 	// Convert to RGBA
 	Magick::Image img_tmp(img.size (), transparent ());
-	img_tmp.composite (img, img.size (), Magick::OverCompositeOp);
+	img_tmp.composite (img, img.size (), Magick::CopyCompositeOp);
 	img = img_tmp;
 
 	// double-check RGB channels
@@ -376,7 +376,7 @@ std::vector<Magick::Image> load_image (Magick::Image &img)
 
 			img = Magick::Image (Magick::Geometry (output_width, output_height), transparent ());
 
-			img.composite (copy, Magick::Geometry (0, 0, border, border), Magick::OverCompositeOp);
+			img.composite (copy, Magick::Geometry (0, 0, border, border), Magick::CopyCompositeOp);
 		}
 
 		if (process_mode == PROCESS_NORMAL)
@@ -806,7 +806,7 @@ void process_image (Magick::Image &img)
 				swizzle (img, true);
 
 			// composite the mipmap onto the preview
-			preview.composite (img, Magick::Geometry (0, 0, hoff, voff), Magick::OverCompositeOp);
+			preview.composite (img, Magick::Geometry (0, 0, hoff, voff), Magick::CopyCompositeOp);
 
 			// position for next mipmap
 			voff += height;
